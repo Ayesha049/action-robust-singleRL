@@ -31,6 +31,22 @@ def median_seed(metrics, env_id, mode):
     return int(m.loc[len(m) // 2, "seed"]), float(m.loc[len(m) // 2, "clean"])
 
 
+def representative_episode(conds):
+    """Episode closest to the median for ALL panels at once.
+
+    conds: list of (run_dir, sweep, alpha) per panel. Uses evaluate.py's eval.csv.
+    Score = max over panels of |percentile rank - 0.5|; the smallest score wins.
+    """
+    cols = {}
+    for k, (run_dir, sweep, alpha) in enumerate(conds):
+        ev = pd.read_csv(os.path.join(run_dir, "eval.csv"))
+        cols[k] = ev[(ev.sweep == sweep) & (ev.alpha == alpha)].set_index("episode")["return"]
+    df = pd.DataFrame(cols)
+    score = (df.rank(pct=True) - 0.5).abs().max(axis=1)
+    e = int(score.idxmin())
+    return e, float(score[e]), df.rank(pct=True).loc[e].round(2).tolist()
+
+
 def rollout(env_id, run_dir, sweep, alpha, alpha_idx, episode, size, every):
     env = gym.make(env_id, render_mode="rgb_array", width=size, height=size)
     actor = load_actor(run_dir, "actor.pt", env)
@@ -89,7 +105,8 @@ def main():
     p.add_argument("--alphas", default="0,0.05,0.1,0.15,0.2,0.25,0.3,0.35,0.4,0.45,0.5",
                    help="evaluate.py's grid, to reuse its random stream for this alpha")
     p.add_argument("--robust", choices=["pr", "nr"], default="pr")
-    p.add_argument("--episode", type=int, default=0)
+    p.add_argument("--episode", default="auto",
+                   help="evaluation episode index, or 'auto' = most representative for all panels")
     p.add_argument("--metrics", default="results/runs/metrics.csv")
     p.add_argument("--runs", default="runs")
     p.add_argument("--size", type=int, default=240)
@@ -101,14 +118,22 @@ def main():
     grid = [float(x) for x in a.alphas.split(",")]
     ai = grid.index(a.alpha)
     metrics = pd.read_csv(a.metrics)
+    spec = [("none", 0.0, "clean"),
+            ("none", a.alpha, f"{a.sweep.upper()} a={a.alpha}"),
+            (a.robust, a.alpha, f"{a.sweep.upper()} a={a.alpha}")]
+    dirs = [os.path.join(a.runs, f"{a.env_id}__{m}__s{median_seed(metrics, a.env_id, m)[0]}")
+            for m, _, _ in spec]
+    if a.episode == "auto":
+        episode, score, pct = representative_episode(
+            [(d, a.sweep, al) for d, (_, al, _) in zip(dirs, spec)])
+        print(f"episode {episode}: percentile ranks {pct} (max |pct-0.5| = {score:.2f})")
+    else:
+        episode = int(a.episode)
     panels = []
-    for mode, sweep_alpha, cond in [("none", 0.0, "clean"),
-                                    ("none", a.alpha, f"{a.sweep.upper()} a={a.alpha}"),
-                                    (a.robust, a.alpha, f"{a.sweep.upper()} a={a.alpha}")]:
-        seed, clean = median_seed(metrics, a.env_id, mode)
-        run_dir = os.path.join(a.runs, f"{a.env_id}__{mode}__s{seed}")
+    for run_dir, (mode, sweep_alpha, cond) in zip(dirs, spec):
+        seed = int(run_dir.rsplit("__s", 1)[1])
         frames, rets, total, steps, fell = rollout(
-            a.env_id, run_dir, a.sweep, sweep_alpha, grid.index(sweep_alpha), a.episode,
+            a.env_id, run_dir, a.sweep, sweep_alpha, grid.index(sweep_alpha), episode,
             a.size, a.every)
         panels.append(dict(frames=frames, rets=rets, title=f"{LABELS[mode]} | {cond}",
                            sub=f"seed {seed}", total=total, steps=steps, fell=fell))
