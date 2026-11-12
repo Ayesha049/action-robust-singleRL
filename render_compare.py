@@ -48,7 +48,12 @@ def representative_episode(conds):
 
 
 def rollout(env_id, run_dir, sweep, alpha, alpha_idx, episode, size, every):
-    env = gym.make(env_id, render_mode="rgb_array", width=size, height=size)
+    # v5's default camera is free (doesn't follow the robot); track the torso, side view
+    import mujoco
+    cam = {"type": mujoco.mjtCamera.mjCAMERA_TRACKING, "trackbodyid": 1, "distance": 4.0,
+           "elevation": -15.0, "azimuth": 90.0}
+    env = gym.make(env_id, render_mode="rgb_array", width=size, height=size,
+                   default_camera_config=cam)
     actor = load_actor(run_dir, "actor.pt", env)
     low, high = env.action_space.low, env.action_space.high
     obs, _ = env.reset(seed=100_000 + episode)
