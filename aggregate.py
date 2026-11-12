@@ -97,7 +97,7 @@ def main():
                     piv = g.pivot(index="seed", columns="alpha", values="return")
                     if norm:
                         piv = piv.div(piv[0.0], axis=0)
-                    m = piv.mean(0)
+                    m = piv.mean(axis=0)
                     lo, hi = zip(*[bootstrap_ci(piv[c].values) for c in piv.columns])
                     ax.plot(piv.columns, m, color=COLORS[mode], label=LABELS[mode], lw=2)
                     ax.fill_between(piv.columns, lo, hi, color=COLORS[mode], alpha=0.2)
