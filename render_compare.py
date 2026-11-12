@@ -47,13 +47,19 @@ def representative_episode(conds):
     return e, float(score[e]), df.rank(pct=True).loc[e].round(2).tolist()
 
 
+def render_tracked(env):
+    """Side view centred on the robot. Gymnasium's offscreen renderer forces a free
+    camera on every render, so tracking is done by moving the free camera's lookat."""
+    u = env.unwrapped
+    env.render()  # make sure the viewer exists
+    cam = u.mujoco_renderer._get_viewer("rgb_array").cam
+    cam.distance, cam.azimuth, cam.elevation = 4.0, 90.0, -15.0
+    cam.lookat[:] = [u.data.qpos[0], 0.0, 1.0]
+    return env.render()
+
+
 def rollout(env_id, run_dir, sweep, alpha, alpha_idx, episode, size, every):
-    # v5's default camera is free (doesn't follow the robot); track the torso, side view
-    import mujoco
-    cam = {"type": mujoco.mjtCamera.mjCAMERA_TRACKING, "trackbodyid": 1, "distance": 4.0,
-           "elevation": -15.0, "azimuth": 90.0}
-    env = gym.make(env_id, render_mode="rgb_array", width=size, height=size,
-                   default_camera_config=cam)
+    env = gym.make(env_id, render_mode="rgb_array", width=size, height=size)
     actor = load_actor(run_dir, "actor.pt", env)
     low, high = env.action_space.low, env.action_space.high
     obs, _ = env.reset(seed=100_000 + episode)
@@ -61,7 +67,7 @@ def rollout(env_id, run_dir, sweep, alpha, alpha_idx, episode, size, every):
     frames, rets, total, done, t, fell = [], [], 0.0, False, 0, False
     while not done:
         if t % every == 0:
-            frames.append(env.render())
+            frames.append(render_tracked(env))
             rets.append(total)
         with torch.no_grad():
             a = actor(torch.as_tensor(obs, dtype=torch.float32).unsqueeze(0))[0].numpy()
@@ -77,7 +83,7 @@ def rollout(env_id, run_dir, sweep, alpha, alpha_idx, episode, size, every):
         t += 1
         done = term or trunc
         fell = bool(term)
-    frames.append(env.render())
+    frames.append(render_tracked(env))
     rets.append(total)
     env.close()
     return frames, rets, total, t, fell
